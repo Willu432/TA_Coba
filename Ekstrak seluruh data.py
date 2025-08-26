@@ -733,18 +733,28 @@ def extract_features_from_csv(csv_path):
 
         # # ---- integrasi & prediksi SESUDAH SEMUA LEAD ----
         try:
-            feature_vector = np.array([packed.get(k, 0.0) for k in EXPECTED_FEATURES], dtype=float).reshape(1, -1)
-            try:
-                n_expected_by_scaler = getattr(scaler, "n_features_in_", feature_vector.shape[1])
-                if feature_vector.shape[1] != n_expected_by_scaler:
-                    print(f"⚠️ Mismatch fitur: vector={feature_vector.shape[1]}, scaler expects={n_expected_by_scaler}")
-            except Exception:
-                pass
+           # Bangun DataFrame dengan NAMA KOLOM yang konsisten
+            X = pd.DataFrame(
+                [{k: packed.get(k, 0.0) for k in EXPECTED_FEATURES}],
+                columns=EXPECTED_FEATURES
+            ).astype(float)
 
-            feature_vector_scaled = scaler.transform(feature_vector)
+            # Samakan SET & URUTAN kolom persis seperti saat scaler di-fit
+            if hasattr(scaler, "feature_names_in_"):
+                missing = [c for c in scaler.feature_names_in_ if c not in X.columns]
+                extra   = [c for c in X.columns if c not in scaler.feature_names_in_]
+                if missing:
+                    print("⚠️ Kolom yang diharapkan scaler tapi tidak ada:", missing)
+                if extra:
+                    print("ℹ️ Kolom ekstra (akan diabaikan):", extra)
+
+                # Reindex sesuai urutan scaler; kolom yang hilang diisi 0.0
+                X = X.reindex(columns=scaler.feature_names_in_, fill_value=0.0)
+
+            X_scaled = scaler.transform(X)
             # feature_for_model = feature_vector
             label = predict_clusters_xgb_integrated(
-                feature_vector_scaled, model_xgb, kmeans_abnormal
+                X_scaled, model_xgb, kmeans_abnormal
             )[0]
         except Exception as e:
             print(f"❌ Gagal melakukan prediksi klaster ({os.path.basename(csv_path)}): {e}")
@@ -756,30 +766,7 @@ def extract_features_from_csv(csv_path):
         # biar barisnya di-SKIP dengan pesan jelas
         raise RuntimeError(f"Gagal memproses file {csv_path}: {e}")
 
-# ====== LOOP SEMUA SUBFOLDER & FILE ======
-def run_batch():
-    rows = []
-    # telusuri semua subfolder di MAIN_DIR
-    for subject_dir in sorted([d for d in glob.glob(os.path.join(MAIN_DIR, "*")) if os.path.isdir(d)]):
-        subject = os.path.basename(subject_dir)
-
-        # ambil maksimal 20 file raw per subjek
-        csv_files = sorted(glob.glob(os.path.join(subject_dir, "Data_*_raw.csv")))[:20]
-        if not csv_files:
-            continue  # skip jika tidak ada raw
-
-        for csv_path in csv_files:
-            try:
-                packed, label = extract_features_from_csv(csv_path)
-                row = {"subject": subject, **packed, "diagnostic_class": label}
-                rows.append(row)
-                print(f"[OK] {subject} → {os.path.basename(csv_path)} → {label}")
-            except Exception as e:
-                print(f"[SKIP] {subject} / {os.path.basename(csv_path)}: {e}")
-
-    if not rows:
-        print("Tidak ada data yang berhasil diproses.")
-        return
+# ====== KONFIGURASI BATCH ======
 # OPSIONAL di atas run_batch (dekat konfigurasi)
 OVERWRITE_OUTPUT = False  # set True kalau mau overwrite OUT_CSV setiap run
 
@@ -803,7 +790,7 @@ def run_batch():
         subject = os.path.basename(subject_dir)
 
         # ambil maksimal 20 file raw per subjek
-        csv_files = sorted(glob.glob(os.path.join(subject_dir, "Data_*_raw.csv")))[:20]
+        csv_files = sorted(glob.glob(os.path.join(subject_dir, "Data_*_raw.csv")))[:25]
         if not csv_files:
             continue
 

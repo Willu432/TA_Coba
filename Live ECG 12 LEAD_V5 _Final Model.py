@@ -953,27 +953,34 @@ while True:
     # rr_i, rr_std_i, pr_i, qs_i, qtc_i, st_i, rs_ratio_i, heartrate_i, lalu lanjut ke lead berikutnya.
     FEATURE_FAMILIES = ['rr', 'rr_std', 'pr', 'qs', 'qtc', 'st', 'rs_ratio', 'heartrate']
     EXPECTED_FEATURES = [f"{fam}_{lead.lower()}" for lead in leads for fam in FEATURE_FAMILIES]
+    # Bangun DataFrame dengan NAMA KOLOM yang konsisten
+    X = pd.DataFrame(
+        [{k: packedData.get(k, 0.0) for k in EXPECTED_FEATURES}],
+        columns=EXPECTED_FEATURES
+    ).astype(float)
 
-    # Bentuk vektor fitur sesuai urutan EXPECTED_FEATURES (deterministik)
-    feature_vector = np.array([packedData.get(k, 0.0) for k in EXPECTED_FEATURES], dtype=float).reshape(1, -1)
+    # Samakan SET & URUTAN kolom persis seperti saat scaler di-fit
+    if hasattr(scaler, "feature_names_in_"):
+        missing = [c for c in scaler.feature_names_in_ if c not in X.columns]
+        extra   = [c for c in X.columns if c not in scaler.feature_names_in_]
+        if missing:
+            print("⚠️ Kolom yang diharapkan scaler tapi tidak ada:", missing)
+        if extra:
+            print("ℹ️ Kolom ekstra (akan diabaikan):", extra)
 
-    # (Opsional) sanity check jumlah fitur vs scaler
-    try:
-        n_expected_by_scaler = getattr(scaler, "n_features_in_", feature_vector.shape[1])
-        if feature_vector.shape[1] != n_expected_by_scaler:
-            print(f"⚠️ Mismatch fitur: vector={feature_vector.shape[1]}, scaler expects={n_expected_by_scaler}")
-    except Exception:
-        pass
+        # Reindex sesuai urutan scaler; kolom yang hilang diisi 0.0
+        X = X.reindex(columns=scaler.feature_names_in_, fill_value=0.0)
+
 
     # Scale → Prediksi label: "Normal" / "Potential Fast Arrhytmia" / "Potential Heart Block"
     try:
-        feature_vector_scaled = scaler.transform(feature_vector)
+        X_scaled = scaler.transform(X)
+        # feature_for_model = feature_vector
         cluster_label = predict_clusters_xgb_integrated(
-            feature_vector_scaled,
+            X_scaled,
             model_xgb,
             kmeans_abnormal
         )[0]
-
         # Simpan ke packedData (ikut tersimpan ke Excel)
         packedData["cluster_label"] = cluster_label
         print(f"Predicted Cluster Label: {cluster_label}")
